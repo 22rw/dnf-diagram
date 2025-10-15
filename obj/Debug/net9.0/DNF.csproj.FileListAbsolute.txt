@@ -1,0 +1,14 @@
+C:\Users\anton\Projects\C#\DNF\bin\Debug\net9.0\DNF.exe
+C:\Users\anton\Projects\C#\DNF\bin\Debug\net9.0\DNF.deps.json
+C:\Users\anton\Projects\C#\DNF\bin\Debug\net9.0\DNF.runtimeconfig.json
+C:\Users\anton\Projects\C#\DNF\bin\Debug\net9.0\DNF.dll
+C:\Users\anton\Projects\C#\DNF\bin\Debug\net9.0\DNF.pdb
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\DNF.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\DNF.AssemblyInfoInputs.cache
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\DNF.AssemblyInfo.cs
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\DNF.csproj.CoreCompileInputs.cache
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\DNF.dll
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\refint\DNF.dll
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\DNF.pdb
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\DNF.genruntimeconfig.cache
+C:\Users\anton\Projects\C#\DNF\obj\Debug\net9.0\ref\DNF.dll

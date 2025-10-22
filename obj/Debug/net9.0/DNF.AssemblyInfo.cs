@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("DNF")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e21633483ddf7ac3a0f17850d3dab4f40da48b97")]
 [assembly: System.Reflection.AssemblyProductAttribute("DNF")]
 [assembly: System.Reflection.AssemblyTitleAttribute("DNF")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -1,4 +1,7 @@
+using Dumpify;
 using System;
+using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 // --- Lexer related stuff ---
 
@@ -13,31 +16,6 @@ class Opener : Token { }
 class Closer : Token { }
 class Atom : Token { }
 class Eof : Token { }
-
-enum Operation : int
-{
-    ATOM = -1,
-    NOT = '!',
-    AND = '^',
-    OR = 'v'
-}
-
-enum NodePosition : int
-{
-    AboveZero = 1,
-    OnZero = 0,
-    BelowZero = -1
-}
-
-class Node
-{
-    public Operation operation;     // if gate its corresponding op, if input/atom -1
-    public int baseline;            // limit of allowed child-node placement
-    public NodePosition position;   // if above, expand above, if on, expand midwise, if below expand below
-    public int requiredHeight;      // for child requiredHeight += child.requiredHeight | base height = 14
-    public List<Node>? children;
-    public int outputHeight;        // baseline + requiredHeight/2
-}
 
 public class Lexer
 {
@@ -112,7 +90,6 @@ public partial class Expression
 
         while(true)
         {
-            // TODO: Peek instead of Pop?? 
             Token op = new Token();
             switch (tokens.Peek())
             {
@@ -143,7 +120,8 @@ public partial class Expression
                 Token t => TokenError(t)
             };
 
-            if (lhs.character == op.character)
+            // Multiple operands combined with the same operators can be put in the same expression
+            if (op.character == lhs.character)
             {
                 lhs.operands!.Add(rhs);
             }
@@ -183,6 +161,134 @@ public partial class Expression
     }
 }
 
+public enum NodePosition : int
+{
+    AboveZero = 1,
+    OnZero = 0,
+    BelowZero = -1
+}
+
+public partial class Node
+{
+    public char character;          
+    public int column;             // distance from root node as a multiple of collumns
+    public int baseline;            // limit of allowed child-node placement
+    public NodePosition position;   // if above, expand above, if on, expand midwise, if below expand below
+    public int requiredHeight;      // for child requiredHeight += child.requiredHeight | base height = 14
+    public List<Node>? childs;
+    public int outputHeight;        // baseline + requiredHeight/2
+
+    public static readonly int BASE_HEIGHT = 24;
+    public static readonly int COLUMN_WIDTH = 24;
+}
+
+public partial class Expression
+{
+
+    public Node ToNodeTree(int level = 0)
+    {
+        Node me = new Node
+        {
+            character = this.character,
+            column = level
+        };
+
+        if (this is OperationExpression)
+        {
+            me.childs = new List<Node>();
+            foreach (Expression child in this.operands!)
+            {
+                me.childs.Add(child.ToNodeTree(level + 1)!);
+            }
+        }
+
+        // requiredHeight
+        if (this is AtomExpression)
+            me.requiredHeight = Node.BASE_HEIGHT;
+        else
+            me.requiredHeight = me.childs!.Sum(child => child.requiredHeight);
+
+        if (level == 0)
+            me.TraverseDown();
+
+        return me;
+    }
+}
+
+public partial class Node
+{
+    /*
+    * Now that the node tree is a structural copy of the expression tree, we can start calculating positions for our childs
+    */
+    public void TraverseDown(int level = 0)
+    {
+        // position and baseline
+        if (level == 0)
+        {
+            // if we are the root node, child nodes will be spread centered (off-center by 1 with an uneven number of childs)
+
+            this.position = NodePosition.OnZero;
+
+            int childsBelow = this.childs!.Count / 2;
+            int childsAbove = this.childs!.Count - childsBelow;
+
+            for (int i = 0; i < this.childs!.Count; i++)
+            {
+                Node child = this.childs![i];
+                if (i < childsBelow)
+                {
+                    child.position = NodePosition.BelowZero;
+                    child.requiredHeight *= -1;
+                }
+                else
+                {
+                    this.childs[i].position = NodePosition.AboveZero;
+                }
+
+                /*
+                 * The order in wich we place our childs is unimportant, so we just place half of them below our middle, the other half above.
+                 * Starting with the first child, we continue until we hit the last child planned to be placed below.
+                 * From then on, all remaining childs are placed from the middle upwards.
+                 */
+                if (i == 0 || i == childsBelow)
+                    child.baseline = 0;
+                else if (i < childsBelow)
+                    child.baseline = this.childs![i - 1].baseline - this.childs![i - 1].requiredHeight;
+                else
+                    child.baseline = this.childs![i - 1].baseline + this.childs![i - 1].requiredHeight;
+
+                child.outputHeight = child.baseline + child.requiredHeight / 2;
+
+                child.TraverseDown(level + 1);
+            }
+        }
+        else
+        {
+            /*
+             * We are not the root node and should have got a baseline by our parent.
+             * Atomic expressions (letters) don't have childs, so we only calculate child placement if we are an operation expression.
+             */
+            if (this.character == 'v' || this.character == '^')
+            {
+                Debug.WriteLine("I am a non-root operation expression. char: " + this.character + " position: " + this.position.ToString());
+                for (int i = 0; i < this.childs!.Count; i++)
+                {
+                    Node child = this.childs![i];
+                    child.position = this.position;
+                    child.requiredHeight *= (int)child.position;
+
+                    if (i == 0)
+                        child.baseline = this.baseline;
+                    else
+                        child.baseline = this.childs![i - 1].baseline + this.childs![i - 1].requiredHeight;
+
+                    child.outputHeight = child.baseline + child.requiredHeight / 2;
+                }
+            }
+        }
+    }
+}
+
 // --- Main method ---
 
 class Program 
@@ -192,20 +298,21 @@ class Program
         string input;
         while((input = Console.ReadLine() ?? "") != "quit")
         {
-            Stack<Token> tokens = Lexer.Tokenize(input);
-            Console.WriteLine($"Parsed {tokens.Count} tokens.");
-            foreach(Token t in tokens)
-            {
-                Console.WriteLine($"[{t.GetType()}] {t.character}");
-            }
-            Console.WriteLine();
+            //Stack<Token> tokens = Lexer.Tokenize(input);
+            //Console.WriteLine($"Parsed {tokens.Count} tokens.");
+            //foreach(Token t in tokens)
+            //{
+            //    Console.WriteLine($"[{t.GetType()}] {t.character}");
+            //}
+            //Console.WriteLine();
 
             try
             {
                 Expression expr = Expression.FromString(input);
-                Console.WriteLine("Parsed expression:");
-                Console.WriteLine(expr.ToString());
+                Node tree = expr.ToNodeTree();
+                tree.Dump(members: new MembersConfig { IncludeFields = true, IncludeNonPublicMembers = true });
                 Console.WriteLine();
+                
             } catch (Exception e) { Console.WriteLine(e.ToString()); }
         }
     }

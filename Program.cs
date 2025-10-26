@@ -2,6 +2,7 @@ using Dumpify;
 using System;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Drawing;
 
 // --- Lexer related stuff ---
 
@@ -72,6 +73,7 @@ public partial class Expression
      * 
      * (A^B) v !(A^B) v (A^!C) 
      *  
+     * Pratt-Parsing the DNF into an expression tree
      */
     public static Expression Parse(Stack<Token> tokens, bool invert = false)
     {
@@ -171,12 +173,13 @@ public enum NodePosition : int
 public partial class Node
 {
     public char character;          
-    public int column;             // distance from root node as a multiple of collumns
+    public int column;              // distance from root node as a multiple of collumns
     public int baseline;            // limit of allowed child-node placement
     public NodePosition position;   // if above, expand above, if on, expand midwise, if below expand below
     public int requiredHeight;      // for child requiredHeight += child.requiredHeight | base height = 14
     public List<Node>? childs;
     public int outputHeight;        // baseline + requiredHeight/2
+    public int deepestNode;         // Deepest column this branch reaches. Used during rendering to determine the canvas width 
 
     public static readonly int BASE_HEIGHT = 24;
     public static readonly int COLUMN_WIDTH = 24;
@@ -225,6 +228,7 @@ public partial class Node
         // position and baseline
         if (level == 0)
         {
+            this.deepestNode = this.GetDeepestNode();
             // if we are the root node, child nodes will be spread centered (off-center by 1 with an uneven number of childs)
 
             this.position = NodePosition.OnZero;
@@ -286,6 +290,21 @@ public partial class Node
                 }
             }
         }
+    }
+
+    public int GetDeepestNode() {
+        int deepest = this.level;
+        if(this.childs is {}) {
+            foreach(Node child in this.childs)
+                deepest = Math.Max(deepest, child.GetDeepestNode());
+        }
+        return deepest;
+    }
+}
+
+class Canvas {
+    public static BitMap RenderNode(Node node) {
+        BitMap canvas = new BitMap();
     }
 }
 

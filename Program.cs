@@ -1,8 +1,5 @@
 using Dumpify;
-using System;
 using System.Diagnostics;
-using System.Text.RegularExpressions;
-using System.Drawing;
 
 // --- Lexer related stuff ---
 
@@ -195,7 +192,8 @@ public partial class Expression
             character = this.character,
             column = level
         };
-
+        
+        // collect child nodes
         if (this is OperationExpression)
         {
             me.childs = new List<Node>();
@@ -210,10 +208,18 @@ public partial class Expression
             me.requiredHeight = Node.BASE_HEIGHT;
         else
             me.requiredHeight = me.childs!.Sum(child => child.requiredHeight);
-
+        
+        // deepestNode
+        me.deepestNode = me.column;
+        if(me.childs is {}) {
+            foreach(Node child in me.childs)
+                me.deepestNode = Math.Max(me.deepestNode, child.GetDeepestNode());
+        }
+        
+        // initialize all other nodes down from root node
         if (level == 0)
             me.TraverseDown();
-
+        
         return me;
     }
 }
@@ -228,9 +234,7 @@ public partial class Node
         // position and baseline
         if (level == 0)
         {
-            this.deepestNode = this.GetDeepestNode();
             // if we are the root node, child nodes will be spread centered (off-center by 1 with an uneven number of childs)
-
             this.position = NodePosition.OnZero;
 
             int childsBelow = this.childs!.Count / 2;
@@ -292,19 +296,14 @@ public partial class Node
         }
     }
 
-    public int GetDeepestNode() {
-        int deepest = this.level;
+    public int GetDeepestNode()
+    {
+        int deepest = this.column;
         if(this.childs is {}) {
             foreach(Node child in this.childs)
                 deepest = Math.Max(deepest, child.GetDeepestNode());
         }
         return deepest;
-    }
-}
-
-class Canvas {
-    public static BitMap RenderNode(Node node) {
-        BitMap canvas = new BitMap();
     }
 }
 

@@ -178,8 +178,8 @@ public partial class Node
     public int outputHeight;        // baseline + requiredHeight/2
     public int deepestNode;         // Deepest column this branch reaches. Used during rendering to determine the canvas width 
 
-    public static readonly int BASE_HEIGHT = 24;
-    public static readonly int COLUMN_WIDTH = 24;
+    public static readonly int BASE_HEIGHT = 64;
+    public static readonly int COLUMN_WIDTH = 64;
 }
 
 public partial class Expression
@@ -190,7 +190,8 @@ public partial class Expression
         Node me = new Node
         {
             character = this.character,
-            column = level
+            column = level,
+            deepestNode = level
         };
         
         // collect child nodes
@@ -199,7 +200,10 @@ public partial class Expression
             me.childs = new List<Node>();
             foreach (Expression child in this.operands!)
             {
-                me.childs.Add(child.ToNodeTree(level + 1)!);
+                var node = child.ToNodeTree(level + 1)!;
+                me.childs.Add(node);
+                if (node.deepestNode > me.deepestNode)
+                    me.deepestNode = node.deepestNode;
             }
         }
 
@@ -207,13 +211,7 @@ public partial class Expression
         if (this is AtomExpression)
             me.requiredHeight = Node.BASE_HEIGHT;
         else
-            me.requiredHeight = me.childs!.Sum(child => child.requiredHeight);
-        
-        // deepestNode
-        me.deepestNode = me.column;
-        if(me.childs is {}) {
-            foreach(Node child in me.childs)
-                me.deepestNode = Math.Max(me.deepestNode, child.GetDeepestNode());
+            me.requiredHeight = me.childs!.Sum(child => child.requiredHeight);        
         }
         
         // initialize all other nodes down from root node
@@ -294,16 +292,6 @@ public partial class Node
                 }
             }
         }
-    }
-
-    public int GetDeepestNode()
-    {
-        int deepest = this.column;
-        if(this.childs is {}) {
-            foreach(Node child in this.childs)
-                deepest = Math.Max(deepest, child.GetDeepestNode());
-        }
-        return deepest;
     }
 }
 

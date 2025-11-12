@@ -1,5 +1,9 @@
 using Dumpify;
 using System.Diagnostics;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+using System.Runtime.CompilerServices;
 
 // --- Lexer related stuff ---
 
@@ -44,6 +48,7 @@ public class Lexer
 public partial class Expression
 {
     public bool invert;
+    public bool isOpen;
     public char character;
     public List<Expression>? operands;
 }
@@ -97,6 +102,7 @@ public partial class Expression
                 case Closer:
                     tokens.Pop();
                     if (lhs.operands == null) lhs.invert = invert;
+                    lhs.isOpen = false;
                     return lhs;
                 case Operator:
                     op = tokens.Pop();
@@ -120,13 +126,13 @@ public partial class Expression
             };
 
             // Multiple operands combined with the same operators can be put in the same expression
-            if (op.character == lhs.character)
+            if (op.character == lhs.character && lhs.isOpen)
             {
                 lhs.operands!.Add(rhs);
             }
             else
             {
-                lhs = new OperationExpression { character = op.character, invert = tokens.Peek().GetType() != typeof(Operator) ? invert : false, operands = new List<Expression> { lhs, rhs } };
+                lhs = new OperationExpression { character = op.character, invert = tokens.Peek().GetType() != typeof(Operator) ? invert : false, isOpen = true, operands = new List<Expression> { lhs, rhs } };
             }
         }
     }
@@ -160,25 +166,21 @@ public partial class Expression
     }
 }
 
-public enum NodePosition : int
-{
-    AboveZero = 1,
-    OnZero = 0,
-    BelowZero = -1
-}
-
 public partial class Node
 {
-    public char character;          
+    public char character;
+    public bool invert;
     public int column;              // distance from root node as a multiple of collumns
-    public int baseline;            // limit of allowed child-node placement
-    public NodePosition position;   // if above, expand above, if on, expand midwise, if below expand below
     public int requiredHeight;      // for child requiredHeight += child.requiredHeight | base height = 14
-    public List<Node>? childs;
     public int outputHeight;        // baseline + requiredHeight/2
     public int deepestNode;         // Deepest column this branch reaches. Used during rendering to determine the canvas width 
 
-    public static readonly int BASE_HEIGHT = 64;
+    public int from;
+    public int to;
+
+    public List<Node>? childs;
+
+    public static readonly int BASE_SIZE = 64;
     public static readonly int COLUMN_WIDTH = 64;
 }
 
@@ -191,7 +193,8 @@ public partial class Expression
         {
             character = this.character,
             column = level,
-            deepestNode = level
+            deepestNode = level,
+            invert = this.invert,
         };
         
         // collect child nodes
@@ -200,24 +203,22 @@ public partial class Expression
             me.childs = new List<Node>();
             foreach (Expression child in this.operands!)
             {
-                var node = child.ToNodeTree(level + 1)!;
-                me.childs.Add(node);
-                if (node.deepestNode > me.deepestNode)
-                    me.deepestNode = node.deepestNode;
+                var childNode = child.ToNodeTree(level + 1)!;
+                me.childs.Add(childNode);
+                me.deepestNode = Math.Max(me.deepestNode, childNode.deepestNode);
             }
         }
 
         // requiredHeight
         if (this is AtomExpression)
-            me.requiredHeight = Node.BASE_HEIGHT;
+            me.requiredHeight = Node.BASE_SIZE;
         else
-            me.requiredHeight = me.childs!.Sum(child => child.requiredHeight);        
-        }
-        
+            me.requiredHeight = me.childs!.Sum(child => child.requiredHeight);
+
         // initialize all other nodes down from root node
         if (level == 0)
-            me.TraverseDown();
-        
+            me.CalculateChildPositions();
+
         return me;
     }
 }
@@ -227,71 +228,109 @@ public partial class Node
     /*
     * Now that the node tree is a structural copy of the expression tree, we can start calculating positions for our childs
     */
-    public void TraverseDown(int level = 0)
+    public void CalculateChildPositions(bool isRoot = true)
     {
-        // position and baseline
-        if (level == 0)
+        if (isRoot)
         {
-            // if we are the root node, child nodes will be spread centered (off-center by 1 with an uneven number of childs)
-            this.position = NodePosition.OnZero;
+            this.from = 0;
+            this.to = requiredHeight;
+        }
 
-            int childsBelow = this.childs!.Count / 2;
-            int childsAbove = this.childs!.Count - childsBelow;
+        this.outputHeight = this.from + (this.to - this.from) / 2 - Node.BASE_SIZE / 2;
 
-            for (int i = 0; i < this.childs!.Count; i++)
+        if (this.childs is not { })
+            return;
+
+        for (int i = 0; i < this.childs!.Count; i++)
+        {
+            var child = this.childs![i];
+
+            if (i == 0)
+                child.from = this.from;
+            else
+                child.from = this.childs![i - 1].to;
+
+            child.to = child.from + child.requiredHeight;
+
+            child.outputHeight = child.from + (child.to - child.from) / 2 - Node.BASE_SIZE / 2;
+
+            child.CalculateChildPositions(false);
+        }
+    }
+}
+
+class Canvas
+{
+    //TODO: Instead of recursive painting, use absolute painting by collecting all nodes in a list before.
+    public static Image DrawCircuit(Node tree)
+    {
+        // Amount of collumns this node and its childs cover times the base node width
+        int width = (tree.deepestNode - tree.column + 1) * Node.BASE_SIZE;
+        int height = tree.requiredHeight;
+
+        Image<Rgb24> background = Canvas.ColoredRect(new Size(width, height), Color.White);
+
+        // We're drawing left to right, but node positions are right to left
+        int posX = background.Width - Node.BASE_SIZE;
+        int posY = tree.outputHeight - tree.from;
+
+        using Image tile = Canvas.LoadTile(tree);
+        //Console.WriteLine($"Painting self ({tile.Width} * {tile.Height}) at {posX}|{posY}.");
+        //Console.WriteLine($"I'm tile {tree.character} at collumn {tree.column}.");
+        //Console.WriteLine($"My measurements are {background.Width} * {background.Height}");
+        background.Mutate(context =>
+        {
+            context.DrawImage(tile, new Point(posX, posY), 1f);
+        });
+
+        if (tree.childs is {})
+        {
+            foreach (var child in tree.childs)
             {
-                Node child = this.childs![i];
-                if (i < childsBelow)
+                int childPosX = background.Width - (child.deepestNode - tree.column + 1) * Node.BASE_SIZE;
+                int childPosY = child.from - tree.from;
+
+                //Console.WriteLine($"Painting child (collumn {child.column} and height {child.requiredHeight}) at {childPosX}|{childPosY}.");
+
+                var childTile = Canvas.DrawCircuit(child);
+
+                background.Mutate(context =>
                 {
-                    child.position = NodePosition.BelowZero;
-                    child.requiredHeight *= -1;
-                }
-                else
-                {
-                    this.childs[i].position = NodePosition.AboveZero;
-                }
+                    context.DrawImage(childTile, new Point(childPosX, childPosY), 1f);
+                });
 
-                /*
-                 * The order in wich we place our childs is unimportant, so we just place half of them below our middle, the other half above.
-                 * Starting with the first child, we continue until we hit the last child planned to be placed below.
-                 * From then on, all remaining childs are placed from the middle upwards.
-                 */
-                if (i == 0 || i == childsBelow)
-                    child.baseline = 0;
-                else if (i < childsBelow)
-                    child.baseline = this.childs![i - 1].baseline - this.childs![i - 1].requiredHeight;
-                else
-                    child.baseline = this.childs![i - 1].baseline + this.childs![i - 1].requiredHeight;
-
-                child.outputHeight = child.baseline + child.requiredHeight / 2;
-
-                child.TraverseDown(level + 1);
+                childTile.Dispose();
             }
         }
-        else
+
+        return background;
+    }
+
+    public static Image<Rgb24> LoadTile(Node node, string tilePath = "tiles")
+    {
+        byte[] color = new byte[3];
+        new Random().NextBytes(color);
+        return node switch
         {
-            /*
-             * We are not the root node and should have got a baseline by our parent.
-             * Atomic expressions (letters) don't have childs, so we only calculate child placement if we are an operation expression.
-             */
-            if (this.character == 'v' || this.character == '^')
+            _ => Canvas.ColoredRect(new(Node.BASE_SIZE), new Rgb24(color[0], color[1], color[2]))
+        };
+    }
+
+    public static Image<Rgb24> ColoredRect(Size dimensions, Rgb24 color)
+    {
+        Image<Rgb24> image = new Image<Rgb24>(dimensions.Width, dimensions.Height);
+
+        image.ProcessPixelRows(accessor =>
+        {
+            for (int y = 0; y < accessor.Height; y++)
             {
-                Debug.WriteLine("I am a non-root operation expression. char: " + this.character + " position: " + this.position.ToString());
-                for (int i = 0; i < this.childs!.Count; i++)
-                {
-                    Node child = this.childs![i];
-                    child.position = this.position;
-                    child.requiredHeight *= (int)child.position;
-
-                    if (i == 0)
-                        child.baseline = this.baseline;
-                    else
-                        child.baseline = this.childs![i - 1].baseline + this.childs![i - 1].requiredHeight;
-
-                    child.outputHeight = child.baseline + child.requiredHeight / 2;
-                }
+                var row = accessor.GetRowSpan(y);
+                for (int x = 0; x < row.Length; x++)
+                    row[x] = color;
             }
-        }
+        });
+
+        return image;
     }
 }
 
@@ -302,25 +341,25 @@ class Program
     static void Main() 
     {
         string input;
+        Console.WriteLine("Enter DNF-expression or type 'quit' to quit.");
         while((input = Console.ReadLine() ?? "") != "quit")
         {
-            //Stack<Token> tokens = Lexer.Tokenize(input);
-            //Console.WriteLine($"Parsed {tokens.Count} tokens.");
-            //foreach(Token t in tokens)
-            //{
-            //    Console.WriteLine($"[{t.GetType()}] {t.character}");
-            //}
-            //Console.WriteLine();
-
             try
             {
                 Expression expr = Expression.FromString(input);
                 Node tree = expr.ToNodeTree();
-                tree.Dump(members: new MembersConfig { IncludeFields = true, IncludeNonPublicMembers = true });
+                //tree.Dump(members: new MembersConfig { IncludeFields = true, IncludeNonPublicMembers = true });
                 Console.WriteLine();
+                Console.WriteLine("Generating circuit...");
+                using Image img = Canvas.DrawCircuit(tree);
+                string fileName = $"DNF-{expr.ToString().Replace('(', '[').Replace(')', ']')}.png";
+                img.Save(fileName);
+                Console.WriteLine($"Wrote image to '{fileName}'");
                 
             } catch (Exception e) { Console.WriteLine(e.ToString()); }
-        }
+
+            Console.WriteLine("Enter DNF-expression or type 'quit' to quit.");
+        }   
     }
 }
 

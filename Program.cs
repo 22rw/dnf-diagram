@@ -1,9 +1,12 @@
 using Dumpify;
-using System.Diagnostics;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
+using System.Web;
 
 // --- Lexer related stuff ---
 
@@ -33,6 +36,7 @@ public class Lexer
                 '(' => new Opener { character = c },
                 ')' => new Closer { character = c },
                 '!' => new Negator { character = c },
+                '⊕' => new Operator { character = c },
                 _ => new Atom { character = c },
             });
         }
@@ -101,7 +105,7 @@ public partial class Expression
                     return lhs;
                 case Closer:
                     tokens.Pop();
-                    if (lhs.operands == null) lhs.invert = invert;
+                    lhs.invert = invert;
                     lhs.isOpen = false;
                     return lhs;
                 case Operator:
@@ -124,16 +128,12 @@ public partial class Expression
                 Opener => Parse(tokens, invert),
                 Token t => TokenError(t)
             };
-
-            // Multiple operands combined with the same operators can be put in the same expression
+            
             if (op.character == lhs.character && lhs.isOpen)
-            {
+                // Multiple operands combined with the same operators can be put in the same expression
                 lhs.operands!.Add(rhs);
-            }
             else
-            {
-                lhs = new OperationExpression { character = op.character, invert = tokens.Peek().GetType() != typeof(Operator) ? invert : false, isOpen = true, operands = new List<Expression> { lhs, rhs } };
-            }
+                lhs = new OperationExpression { character = op.character, isOpen = true, operands = new List<Expression> { lhs, rhs } };
         }
     }
 
@@ -151,17 +151,13 @@ public partial class Expression
     {
         string s = string.Empty;
         if (this.operands?.Count > 0)
-        {
             s = "(" + string.Join(this.character, this.operands) + ")";
-        }
         else
-        {
             s = this.character.ToString();
-        }
+
         if(this.invert)
-        {
             s = "!" + s;
-        }
+
         return s;
     }
 }
@@ -181,7 +177,6 @@ public partial class Node
     public List<Node>? childs;
 
     public static readonly int BASE_SIZE = 64;
-    public static readonly int COLUMN_WIDTH = 64;
 }
 
 public partial class Expression
@@ -257,12 +252,65 @@ public partial class Node
             child.CalculateChildPositions(false);
         }
     }
+
+    public List<Node> AllChilds()
+    {
+        List<Node> _childs = [];
+        if (this.childs != null) 
+        {
+            foreach (Node child in this.childs!)
+            {
+                Debug.WriteLine("Processing child: " + child.character);
+                _childs!.Add(child);
+                Debug.WriteLine("1 Childs is now: " + _childs.Count);
+                List<Node> childChilds = child.AllChilds();
+                Debug.WriteLine("2 Childs is now: " + _childs.Count);
+                _childs.AddRange(childChilds);
+                Debug.WriteLine("3 Childs is now: " + _childs.Count);
+            }
+        }
+        Debug.WriteLine("Returning childs: " + _childs.Count);
+        return _childs!;
+    }
 }
 
 class Canvas
 {
+    public static Image DrawCircuitLinear(Node root)
+    {
+        // Amount of collumns this node and its childs cover times the base node width
+        int width = (root.deepestNode + 1) * Node.BASE_SIZE;
+        int height = root.requiredHeight;
+
+        Image<Rgb24> background = Canvas.ColoredRect(new Size(width, height), Color.White);
+
+        // We're drawing left to right, but node positions are right to left
+        int posX = background.Width - Node.BASE_SIZE;
+        int posY = root.outputHeight - root.from;
+
+        using Image tile = Canvas.LoadTile(root);
+        background.Mutate(context =>
+        {
+            context.DrawImage(tile, new Point(posX, posY), 1f);
+        });
+
+        List<Node> childs = root.AllChilds();
+        background.Mutate(context => 
+        {
+            foreach(Node child in childs)
+            {
+                int childX = background.Width - (child.column + 1) * Node.BASE_SIZE;
+                int childY = child.from;
+                using Image tile = Canvas.LoadTile(root);
+                context.DrawImage(tile, new Point(posX, posY), 1f);
+            }
+        });
+
+        return background;
+    }
+
     //TODO: Instead of recursive painting, use absolute painting by collecting all nodes in a list before.
-    public static Image DrawCircuit(Node tree)
+    public static Image DrawCircuitRecursive(Node tree)
     {
         // Amount of collumns this node and its childs cover times the base node width
         int width = (tree.deepestNode - tree.column + 1) * Node.BASE_SIZE;
@@ -273,6 +321,8 @@ class Canvas
         // We're drawing left to right, but node positions are right to left
         int posX = background.Width - Node.BASE_SIZE;
         int posY = tree.outputHeight - tree.from;
+
+        
 
         using Image tile = Canvas.LoadTile(tree);
         //Console.WriteLine($"Painting self ({tile.Width} * {tile.Height}) at {posX}|{posY}.");
@@ -292,7 +342,7 @@ class Canvas
 
                 //Console.WriteLine($"Painting child (collumn {child.column} and height {child.requiredHeight}) at {childPosX}|{childPosY}.");
 
-                var childTile = Canvas.DrawCircuit(child);
+                var childTile = Canvas.DrawCircuitRecursive(child);
 
                 background.Mutate(context =>
                 {
@@ -306,12 +356,20 @@ class Canvas
         return background;
     }
 
+
+
     public static Image<Rgb24> LoadTile(Node node, string tilePath = "tiles")
     {
         byte[] color = new byte[3];
         new Random().NextBytes(color);
         return node switch
         {
+            { character: '^', invert: true } => Image.Load<Rgb24>($"{tilePath}/NAND.png"),
+            { character: '^' } => Image.Load<Rgb24>($"{tilePath}/AND.png"),
+            { character: 'v', invert: true } => Image.Load<Rgb24>($"{tilePath}/NOR.png"),
+            { character: 'v' } => Image.Load<Rgb24>($"{tilePath}/OR.png"),
+            { character: '⊕', invert: true } => Image.Load<Rgb24>($"{tilePath}/XNOR.png"),
+            { character: '⊕' } => Image.Load<Rgb24>($"{tilePath}/XOR.png"),
             _ => Canvas.ColoredRect(new(Node.BASE_SIZE), new Rgb24(color[0], color[1], color[2]))
         };
     }
@@ -346,18 +404,20 @@ class Program
         {
             try
             {
-                Expression expr = Expression.FromString(input);
-                Node tree = expr.ToNodeTree();
-                //tree.Dump(members: new MembersConfig { IncludeFields = true, IncludeNonPublicMembers = true });
-                Console.WriteLine();
-                Console.WriteLine("Generating circuit...");
-                using Image img = Canvas.DrawCircuit(tree);
-                string fileName = $"DNF-{expr.ToString().Replace('(', '[').Replace(')', ']')}.png";
+                var tokens = Lexer.Tokenize(input);
+                var expr = Expression.Parse(tokens);
+                var root = expr.ToNodeTree();
+
+                Console.WriteLine("\nParsed:");
+                Console.WriteLine(expr.ToString());
+
+                using var img = Canvas.DrawCircuitLinear(root);
+                var fileName = $"DNF-{expr.ToString().Replace('(', '[').Replace(')', ']')}.png";
                 img.Save(fileName);
-                Console.WriteLine($"Wrote image to '{fileName}'");
+                Console.WriteLine($"Wrote image to '{fileName}' \n");
                 
             } catch (Exception e) { Console.WriteLine(e.ToString()); }
-
+            
             Console.WriteLine("Enter DNF-expression or type 'quit' to quit.");
         }   
     }

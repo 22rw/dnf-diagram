@@ -1,5 +1,6 @@
 using Dumpify;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using System.Collections.Generic;
@@ -253,65 +254,15 @@ public partial class Node
         }
     }
 
-    public List<Node> AllChilds()
-    {
-        List<Node> _childs = [];
-        if (this.childs != null) 
-        {
-            foreach (Node child in this.childs!)
-            {
-                Debug.WriteLine("Processing child: " + child.character);
-                _childs!.Add(child);
-                Debug.WriteLine("1 Childs is now: " + _childs.Count);
-                List<Node> childChilds = child.AllChilds();
-                Debug.WriteLine("2 Childs is now: " + _childs.Count);
-                _childs.AddRange(childChilds);
-                Debug.WriteLine("3 Childs is now: " + _childs.Count);
-            }
-        }
-        Debug.WriteLine("Returning childs: " + _childs.Count);
-        return _childs!;
-    }
 }
 
 class Canvas
 {
-    public static Image DrawCircuitLinear(Node root)
+    public static (Image Image, List<Node> Atoms) DrawCircuitRecursive(Node tree)
     {
-        // Amount of collumns this node and its childs cover times the base node width
-        int width = (root.deepestNode + 1) * Node.BASE_SIZE;
-        int height = root.requiredHeight;
+        // List for all child-atoms for linear connection to the input tiles later on
+        List<Node> childAtoms = new List<Node>();
 
-        Image<Rgb24> background = Canvas.ColoredRect(new Size(width, height), Color.White);
-
-        // We're drawing left to right, but node positions are right to left
-        int posX = background.Width - Node.BASE_SIZE;
-        int posY = root.outputHeight - root.from;
-
-        using Image tile = Canvas.LoadTile(root);
-        background.Mutate(context =>
-        {
-            context.DrawImage(tile, new Point(posX, posY), 1f);
-        });
-
-        List<Node> childs = root.AllChilds();
-        background.Mutate(context => 
-        {
-            foreach(Node child in childs)
-            {
-                int childX = background.Width - (child.column + 1) * Node.BASE_SIZE;
-                int childY = child.from;
-                using Image tile = Canvas.LoadTile(root);
-                context.DrawImage(tile, new Point(posX, posY), 1f);
-            }
-        });
-
-        return background;
-    }
-
-    //TODO: Instead of recursive painting, use absolute painting by collecting all nodes in a list before.
-    public static Image DrawCircuitRecursive(Node tree)
-    {
         // Amount of collumns this node and its childs cover times the base node width
         int width = (tree.deepestNode - tree.column + 1) * Node.BASE_SIZE;
         int height = tree.requiredHeight;
@@ -321,8 +272,6 @@ class Canvas
         // We're drawing left to right, but node positions are right to left
         int posX = background.Width - Node.BASE_SIZE;
         int posY = tree.outputHeight - tree.from;
-
-        
 
         using Image tile = Canvas.LoadTile(tree);
         //Console.WriteLine($"Painting self ({tile.Width} * {tile.Height}) at {posX}|{posY}.");
@@ -335,14 +284,17 @@ class Canvas
 
         if (tree.childs is {})
         {
+            int inputDistance = 8;
+            int counter = 0;
+
             foreach (var child in tree.childs)
             {
+                // Calc child position on the canvas, the have the child draw itself and place the returned img on our canvas
+
                 int childPosX = background.Width - (child.deepestNode - tree.column + 1) * Node.BASE_SIZE;
                 int childPosY = child.from - tree.from;
 
-                //Console.WriteLine($"Painting child (collumn {child.column} and height {child.requiredHeight}) at {childPosX}|{childPosY}.");
-
-                var childTile = Canvas.DrawCircuitRecursive(child);
+                var (childTile, _childAtoms) = Canvas.DrawCircuitRecursive(child);
 
                 background.Mutate(context =>
                 {
@@ -350,10 +302,65 @@ class Canvas
                 });
 
                 childTile.Dispose();
+
+                // Check if child either is atom, in that case add to childAtoms, or has child atoms itself, in that case add its child atoms to childAtoms.
+                // A child node has to be either atom or a node that has child atoms itself, so we only have to check if its an atom.
+
+                if (child.character != '^' && child.character != 'v')
+                    childAtoms.Add(child);
+                else
+                    foreach (var _childAtom in _childAtoms)
+                        childAtoms.Add(_childAtom);
+
+
+                // Calc the childs output and our input position and draw a connecting line
+
+                int inputHeight = inputDistance * counter;
+                int centeredInputHeight = inputHeight - (inputDistance * (tree.childs.Count - 1)) / 2;
+                int absInputHeight = (tree.requiredHeight / 2) + centeredInputHeight;
+
+                int absOutputHeight = (child.requiredHeight / 2) + childPosY;
+
+                background.Mutate(context =>
+                {
+                    GraphicsOptions options = new()
+                    {
+                        Antialias = false,
+                        AntialiasSubpixelDepth = 32
+                    };
+                    context.DrawLine(
+                        new DrawingOptions() { GraphicsOptions = options },
+                        Color.Black,
+                        4f,
+                        new PointF(childPosX + childTile.Width - 1, absOutputHeight - 1 + .5f),
+                        new PointF(posX + 12.5f, absInputHeight - 1)
+                    );
+                });
+
+                counter += 1;
             }
         }
 
-        return background;
+        // For each of our child atoms, calc relative position and 'connect' it to left canvas edge
+        Console.WriteLine($"Iterating over {childAtoms.Count} child atoms.");
+        foreach (var atom in childAtoms)
+        {
+            int atomPosX = background.Width - (atom.deepestNode - tree.column + 1) * Node.BASE_SIZE;
+            int atomPosY = atom.from - tree.from;
+
+            if (atomPosX > 0)
+            {
+                Console.WriteLine($"child atom {atom.character} is not aligned with left edge.");
+                for (int i = 0; i < atomPosX; i += Node.BASE_SIZE)
+                    background.Mutate(context =>
+                    {
+                        context.DrawImage(Canvas.LoadTile(atom), new Point(i, atomPosY), 1f);
+                    });
+            }
+        }
+        Console.WriteLine("Finished iterating child atoms.");
+
+        return (background, childAtoms);
     }
 
 
@@ -370,7 +377,9 @@ class Canvas
             { character: 'v' } => Image.Load<Rgb24>($"{tilePath}/OR.png"),
             { character: '⊕', invert: true } => Image.Load<Rgb24>($"{tilePath}/XNOR.png"),
             { character: '⊕' } => Image.Load<Rgb24>($"{tilePath}/XOR.png"),
-            _ => Canvas.ColoredRect(new(Node.BASE_SIZE), new Rgb24(color[0], color[1], color[2]))
+            { character: { }, invert: true } => Image.Load<Rgb24>($"{tilePath}/NOT.png"),
+            { character: { } } => Image.Load<Rgb24>($"{tilePath}/STRAIGHT.png"),
+            _ => Image.Load<Rgb24>($"{tilePath}/STRAIGHT.png")
         };
     }
 
@@ -411,10 +420,11 @@ class Program
                 Console.WriteLine("\nParsed:");
                 Console.WriteLine(expr.ToString());
 
-                using var img = Canvas.DrawCircuitLinear(root);
+                var (image, _) = Canvas.DrawCircuitRecursive(root);
                 var fileName = $"DNF-{expr.ToString().Replace('(', '[').Replace(')', ']')}.png";
-                img.Save(fileName);
+                image.Save(fileName);
                 Console.WriteLine($"Wrote image to '{fileName}' \n");
+                image.Dispose();
                 
             } catch (Exception e) { Console.WriteLine(e.ToString()); }
             

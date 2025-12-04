@@ -354,7 +354,7 @@ class Canvas
                 for (int i = 0; i < atomPosX; i += Node.BASE_SIZE)
                     background.Mutate(context =>
                     {
-                        context.DrawImage(Canvas.LoadTile(atom), new Point(i, atomPosY), 1f);
+                        context.DrawImage(Canvas.LoadTile(new()), new Point(i, atomPosY), 1f);
                     });
             }
         }
